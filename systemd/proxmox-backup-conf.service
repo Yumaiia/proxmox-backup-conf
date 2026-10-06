@@ -1,0 +1,10 @@
+[Unit]
+Description=Sauvegarde de la configuration Proxmox VE
+After=pve-cluster.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/proxmox-backup-conf
+Nice=10
+IOSchedulingClass=idle

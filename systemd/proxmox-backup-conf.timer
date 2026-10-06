@@ -1,0 +1,10 @@
+[Unit]
+Description=Sauvegarde quotidienne de la configuration Proxmox VE
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

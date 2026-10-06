@@ -1,0 +1,10 @@
+# Configuration de /usr/local/sbin/proxmox-backup-conf
+
+# ID du stockage (cifs, nfs, dir...) défini dans Datacenter > Stockage (obligatoire)
+STORAGE_ID=""
+
+# Répertoire local des archives
+#BACKUP_DIR=/var/backup/proxmox-backup-conf
+
+# Nombre de jours d'historique
+#RETENTION_DAYS=7
