@@ -6,7 +6,15 @@ Le script s'installe sur chaque nœud et tourne via un timer systemd.
 
 ## Ce qui est sauvegardé
 
-Chaque jour, une archive `<nœud>_AAAA-MM-JJ_HHMMSS.tar.gz` contenant :
+Chaque jour, une archive `<nœud>_AAAA-MM-JJ_HHMMSS.tar.gz`. Tout son contenu est regroupé dans un dossier `<nœud>-AAAA-MM-JJ_HHMMSS/` :
+
+```
+pve1-2026-10-06_023512/
+├── etc/
+├── var-lib-pve/config.db
+├── dump-config.db.sql
+└── pvereport-pve1-2026-10-06_023512.txt
+```
 
 | Élément | Contenu |
 |---|---|
@@ -17,7 +25,7 @@ Chaque jour, une archive `<nœud>_AAAA-MM-JJ_HHMMSS.tar.gz` contenant :
 
 La copie de `config.db` est faite à chaud mais reste cohérente, même si `pmxcfs` écrit pendant ce temps. Son intégrité est vérifiée (`PRAGMA integrity_check`) avant l'archivage. Le répertoire `/var/lib/pve-cluster` n'est pas archivé tel quel : une copie brute de la base pendant que `pmxcfs` l'utilise ne serait pas fiable.
 
-`dump-config.db.sql` et le rapport `pvereport` sont à la racine de l'archive. Si `pvereport` échoue ou dépasse 5 minutes, la sauvegarde continue sans le rapport, avec un avertissement dans le journal.
+Si `pvereport` échoue ou dépasse 5 minutes, la sauvegarde continue sans le rapport, avec un avertissement dans le journal.
 
 ## Fonctionnement
 
@@ -104,8 +112,12 @@ Lister le contenu d'une archive, ou en extraire un élément dans un répertoire
 ```bash
 tar -tzf pve1_2026-10-06_023512.tar.gz
 mkdir /tmp/restore
-tar -xzf pve1_2026-10-06_023512.tar.gz -C /tmp/restore var-lib-pve/config.db etc/pve/qemu-server
+tar -xzf pve1_2026-10-06_023512.tar.gz -C /tmp/restore \
+    pve1-2026-10-06_023512/var-lib-pve/config.db \
+    pve1-2026-10-06_023512/etc/pve/qemu-server
 ```
+
+Les fichiers sont extraits dans `/tmp/restore/pve1-2026-10-06_023512/`.
 
 Ne jamais extraire directement à la racine `/`. Pour restaurer `config.db` ou la configuration d'un cluster, suivre la documentation Proxmox VE sur le système de fichiers du cluster (`pmxcfs`).
 

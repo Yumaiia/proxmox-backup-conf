@@ -2,12 +2,12 @@
 #
 # proxmox-backup-conf - Sauvegarde quotidienne de la configuration d'un nœud Proxmox VE
 #
-#  1. Archive tar.gz contenant :
-#       - /etc (y compris /etc/pve)
+#  1. Archive tar.gz dont tout le contenu est dans un dossier <nœud>-<date>/ :
+#       - etc/ : /etc (y compris /etc/pve)
 #       - var-lib-pve/config.db : copie cohérente de /var/lib/pve-cluster/config.db
 #                                 via l'API backup de SQLite
-#       - à la racine : dump-config.db.sql (dump SQL de cette copie)
-#                       pvereport-<nœud>-<date>.txt (sortie de pvereport)
+#       - dump-config.db.sql (dump SQL de cette copie)
+#       - pvereport-<nœud>-<date>.txt (sortie de pvereport)
 #  2. Rétention locale de N jours dans $BACKUP_DIR
 #  3. Vérification du stockage Proxmox ($STORAGE_ID)
 #  4. Synchronisation de $BACKUP_DIR vers <partage>/<cluster>/<nœud>
@@ -16,7 +16,7 @@
 
 set -Eeuo pipefail
 
-VERSION=0.9.1
+VERSION=0.9.2
 
 if [[ ${1:-} == "--version" ]]; then
     echo "proxmox-backup-conf $VERSION"
@@ -86,7 +86,7 @@ STAMP=$(date +%Y-%m-%d_%H%M%S)
 # n'est pas archivé tel quel : sa copie brute par tar ne serait pas fiable.
 DB_COPY="$STAGING/var-lib-pve/config.db"
 mkdir "$STAGING/var-lib-pve"
-log "Copie de $PVE_DB"
+log "Copie cohérente de $PVE_DB vers var-lib-pve/config.db"
 sqlite3 -cmd ".timeout 30000" "$PVE_DB" ".backup '$DB_COPY'" \
     || die "échec de la copie de $PVE_DB"
 
@@ -110,15 +110,19 @@ else
 fi
 
 ARCHIVE_NAME="${NODE_NAME}_${STAMP}.tar.gz"
+ARCHIVE_ROOT="${NODE_NAME}-${STAMP}"
 log "Création de l'archive $ARCHIVE_NAME"
 
 # /etc/pve est un montage FUSE (pmxcfs) : pas de --one-file-system, on veut
 # l'inclure. Code retour 1 de tar = fichier modifié pendant la lecture,
 # non bloquant.
+# --transform préfixe tous les chemins par $ARCHIVE_ROOT/, sauf les cibles
+# des liens symboliques (flag S), qui seraient sinon cassées.
 rc=0
 tar --create --gzip \
     --file "$STAGING/$ARCHIVE_NAME" \
     --warning=no-file-changed --warning=no-file-removed \
+    --transform "s,^,${ARCHIVE_ROOT}/,S" \
     -C / etc \
     -C "$STAGING" var-lib-pve dump-config.db.sql "${REPORT_FILES[@]}" \
     || rc=$?
