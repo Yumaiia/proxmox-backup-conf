@@ -11,11 +11,13 @@ Chaque jour, une archive `<nœud>_AAAA-MM-JJ_HHMMSS.tar.gz` contenant :
 | Élément | Contenu |
 |---|---|
 | `etc/` | Tout `/etc`, y compris `/etc/pve` (configuration du cluster, des VM et des conteneurs) |
-| `var/lib/pve-cluster/` | Tout le répertoire de `pmxcfs` |
-| `config.db` | Copie cohérente de la base du cluster, faite avec l'API de sauvegarde en ligne de SQLite |
+| `var-lib-pve/config.db` | Copie cohérente de `/var/lib/pve-cluster/config.db`, la base du cluster, faite avec l'API de sauvegarde en ligne de SQLite |
 | `dump-config.db.sql` | Dump SQL de cette même copie, lisible et réimportable |
+| `pvereport-<nœud>-<date>.txt` | Sortie de `pvereport` : état du nœud (versions, stockages, réseau, VM…) au moment de la sauvegarde |
 
-`config.db` et `dump-config.db.sql` sont à la racine de l'archive. La copie est faite à chaud mais reste cohérente, même si `pmxcfs` écrit pendant ce temps. Son intégrité est vérifiée (`PRAGMA integrity_check`) avant l'archivage.
+La copie de `config.db` est faite à chaud mais reste cohérente, même si `pmxcfs` écrit pendant ce temps. Son intégrité est vérifiée (`PRAGMA integrity_check`) avant l'archivage. Le répertoire `/var/lib/pve-cluster` n'est pas archivé tel quel : une copie brute de la base pendant que `pmxcfs` l'utilise ne serait pas fiable.
+
+`dump-config.db.sql` et le rapport `pvereport` sont à la racine de l'archive. Si `pvereport` échoue ou dépasse 5 minutes, la sauvegarde continue sans le rapport, avec un avertissement dans le journal.
 
 ## Fonctionnement
 
@@ -102,7 +104,7 @@ Lister le contenu d'une archive, ou en extraire un élément dans un répertoire
 ```bash
 tar -tzf pve1_2026-10-06_023512.tar.gz
 mkdir /tmp/restore
-tar -xzf pve1_2026-10-06_023512.tar.gz -C /tmp/restore config.db etc/pve/qemu-server
+tar -xzf pve1_2026-10-06_023512.tar.gz -C /tmp/restore var-lib-pve/config.db etc/pve/qemu-server
 ```
 
 Ne jamais extraire directement à la racine `/`. Pour restaurer `config.db` ou la configuration d'un cluster, suivre la documentation Proxmox VE sur le système de fichiers du cluster (`pmxcfs`).

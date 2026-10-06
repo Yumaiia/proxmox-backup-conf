@@ -4,9 +4,10 @@
 #
 #  1. Archive tar.gz contenant :
 #       - /etc (y compris /etc/pve)
-#       - /var/lib/pve-cluster
-#       - à la racine : config.db (copie cohérente via l'API backup de SQLite)
-#                       dump-config.db.sql (dump SQL de cette copie)
+#       - var-lib-pve/config.db : copie cohérente de /var/lib/pve-cluster/config.db
+#                                 via l'API backup de SQLite
+#       - à la racine : dump-config.db.sql (dump SQL de cette copie)
+#                       pvereport-<nœud>-<date>.txt (sortie de pvereport)
 #  2. Rétention locale de N jours dans $BACKUP_DIR
 #  3. Vérification du stockage Proxmox ($STORAGE_ID)
 #  4. Synchronisation de $BACKUP_DIR vers <partage>/<cluster>/<nœud>
@@ -15,7 +16,7 @@
 
 set -Eeuo pipefail
 
-VERSION=0.9
+VERSION=0.9.1
 
 if [[ ${1:-} == "--version" ]]; then
     echo "proxmox-backup-conf $VERSION"
@@ -29,6 +30,7 @@ STORAGE_ID=""
 BACKUP_DIR=/var/backup/proxmox-backup-conf
 RETENTION_DAYS=7
 PVE_DB=/var/lib/pve-cluster/config.db
+PVEREPORT_TIMEOUT=300
 
 if [[ -r $CONFIG_FILE ]]; then
     # shellcheck source=/dev/null
@@ -36,13 +38,14 @@ if [[ -r $CONFIG_FILE ]]; then
 fi
 
 log() { echo "$*"; }
+warn() { echo "AVERTISSEMENT : $*" >&2; }
 die() { echo "ERREUR : $*" >&2; exit 1; }
 
 # --- Pré-requis --------------------------------------------------------------
 
 [[ $EUID -eq 0 ]] || die "ce script doit être lancé en root"
 
-for cmd in tar gzip sqlite3 rsync pvesm mountpoint flock hostname; do
+for cmd in tar gzip sqlite3 rsync pvesm mountpoint flock hostname timeout; do
     command -v "$cmd" >/dev/null 2>&1 || die "commande '$cmd' introuvable (apt install $cmd ?)"
 done
 
@@ -76,32 +79,48 @@ chmod 700 "$BACKUP_DIR"
 STAGING=$(mktemp -d "$BACKUP_DIR/.tmp.XXXXXX")
 trap 'rm -rf "$STAGING"' EXIT
 
+STAMP=$(date +%Y-%m-%d_%H%M%S)
+
 # Copie cohérente de config.db : l'API backup de SQLite gère les écritures
-# concurrentes de pmxcfs et intègre le journal WAL.
+# concurrentes de pmxcfs et intègre le journal WAL. /var/lib/pve-cluster
+# n'est pas archivé tel quel : sa copie brute par tar ne serait pas fiable.
+DB_COPY="$STAGING/var-lib-pve/config.db"
+mkdir "$STAGING/var-lib-pve"
 log "Copie de $PVE_DB"
-sqlite3 -cmd ".timeout 30000" "$PVE_DB" ".backup '$STAGING/config.db'" \
+sqlite3 -cmd ".timeout 30000" "$PVE_DB" ".backup '$DB_COPY'" \
     || die "échec de la copie de $PVE_DB"
 
-integrity=$(sqlite3 "$STAGING/config.db" "PRAGMA integrity_check;")
+integrity=$(sqlite3 "$DB_COPY" "PRAGMA integrity_check;")
 [[ $integrity == "ok" ]] || die "la copie de config.db est corrompue : $integrity"
 
 # Dump réalisé depuis la copie : config.db et le dump reflètent le même état.
 log "Dump SQL de config.db"
-sqlite3 "$STAGING/config.db" .dump > "$STAGING/dump-config.db.sql" \
+sqlite3 "$DB_COPY" .dump > "$STAGING/dump-config.db.sql" \
     || die "échec du dump de config.db"
 
-ARCHIVE_NAME="${NODE_NAME}_$(date +%Y-%m-%d_%H%M%S).tar.gz"
+# Rapport de diagnostic : non bloquant, la sauvegarde passe avant.
+# Le timeout évite un blocage si un stockage ne répond pas.
+REPORT_NAME="pvereport-${NODE_NAME}-${STAMP}.txt"
+REPORT_FILES=()
+log "Génération de $REPORT_NAME"
+if timeout "$PVEREPORT_TIMEOUT" /usr/bin/pvereport > "$STAGING/$REPORT_NAME" 2>&1; then
+    REPORT_FILES=("$REPORT_NAME")
+else
+    warn "échec ou dépassement de délai de pvereport, rapport non inclus"
+fi
+
+ARCHIVE_NAME="${NODE_NAME}_${STAMP}.tar.gz"
 log "Création de l'archive $ARCHIVE_NAME"
 
 # /etc/pve est un montage FUSE (pmxcfs) : pas de --one-file-system, on veut
-# l'inclure. Code retour 1 de tar = fichier modifié pendant la lecture
-# (fréquent dans /var/lib/pve-cluster), non bloquant.
+# l'inclure. Code retour 1 de tar = fichier modifié pendant la lecture,
+# non bloquant.
 rc=0
 tar --create --gzip \
     --file "$STAGING/$ARCHIVE_NAME" \
     --warning=no-file-changed --warning=no-file-removed \
-    -C / etc var/lib/pve-cluster \
-    -C "$STAGING" config.db dump-config.db.sql \
+    -C / etc \
+    -C "$STAGING" var-lib-pve dump-config.db.sql "${REPORT_FILES[@]}" \
     || rc=$?
 (( rc <= 1 )) || die "échec de tar (code $rc)"
 
